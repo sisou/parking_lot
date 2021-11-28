@@ -1126,7 +1126,7 @@ pub mod deadlock {
     /// Each cycle consist of a vector of `DeadlockedThread`.
     #[cfg(feature = "deadlock_detection")]
     #[inline]
-    pub fn check_deadlock() -> Vec<Vec<deadlock_impl::DeadlockedThread>> {
+    pub fn check_deadlock() -> Vec<deadlock_impl::Deadlock> {
         deadlock_impl::check_deadlock()
     }
 
@@ -1151,13 +1151,31 @@ mod deadlock_impl {
     use std::sync::mpsc;
     use thread_id;
 
+    #[derive(std::fmt::Debug)]
+    pub struct Deadlock {
+        deadlocked_thread_ids: Vec<usize>,
+        all_threads: Vec<ThreadInfo>,
+    }
+
+    impl Deadlock {
+        pub fn deadlocked_thread_ids(&self) -> &Vec<usize> {
+            &self.deadlocked_thread_ids
+        }
+
+        pub fn all_threads(&self) -> &Vec<ThreadInfo> {
+            &self.all_threads
+        }
+    }
+
     /// Representation of a deadlocked thread
-    pub struct DeadlockedThread {
+    #[derive(std::fmt::Debug)]
+    pub struct ThreadInfo {
         thread_id: usize,
+        resources: Vec<usize>,
         backtrace: Backtrace,
     }
 
-    impl DeadlockedThread {
+    impl ThreadInfo {
         /// The system thread id
         pub fn thread_id(&self) -> usize {
             self.thread_id
@@ -1166,6 +1184,11 @@ mod deadlock_impl {
         /// The thread backtrace
         pub fn backtrace(&self) -> &Backtrace {
             &self.backtrace
+        }
+
+        /// The resources held by this thread
+        pub fn resources(&self) -> &Vec<usize> {
+            &self.resources
         }
     }
 
@@ -1177,7 +1200,7 @@ mod deadlock_impl {
         deadlocked: Cell<bool>,
 
         // Sender used to report the backtrace
-        backtrace_sender: UnsafeCell<Option<mpsc::Sender<DeadlockedThread>>>,
+        backtrace_sender: UnsafeCell<Option<mpsc::Sender<ThreadInfo>>>,
 
         // System thread id
         thread_id: usize,
@@ -1198,8 +1221,9 @@ mod deadlock_impl {
         if td.deadlock_data.deadlocked.get() {
             let sender = (*td.deadlock_data.backtrace_sender.get()).take().unwrap();
             sender
-                .send(DeadlockedThread {
+                .send(ThreadInfo {
                     thread_id: td.deadlock_data.thread_id,
+                    resources: (*td.deadlock_data.resources.get()).clone(),
                     backtrace: Backtrace::new(),
                 })
                 .unwrap();
@@ -1233,7 +1257,7 @@ mod deadlock_impl {
         });
     }
 
-    pub fn check_deadlock() -> Vec<Vec<DeadlockedThread>> {
+    pub fn check_deadlock() -> Vec<Deadlock> {
         unsafe {
             // fast pass
             if check_wait_graph_fast() {
@@ -1287,7 +1311,7 @@ mod deadlock_impl {
     // Contrary to the _fast variant this locks the entries table before looking for cycles.
     // Returns all detected thread wait cycles.
     // Note that once a cycle is reported it's never reported again.
-    unsafe fn check_wait_graph_slow() -> Vec<Vec<DeadlockedThread>> {
+    unsafe fn check_wait_graph_slow() -> Vec<Deadlock> {
         static DEADLOCK_DETECTION_LOCK: WordLock = WordLock::new();
         DEADLOCK_DETECTION_LOCK.lock();
 
@@ -1318,9 +1342,12 @@ mod deadlock_impl {
         let mut graph =
             DiGraphMap::<WaitGraphNode, ()>::with_capacity(thread_count * 2, thread_count * 2);
 
+        let mut threads = vec![];
+
         for b in &table.entries[..] {
             let mut current = b.queue_head.get();
             while !current.is_null() {
+                threads.push(current);
                 if !(*current).parked_with_timeout.get()
                     && !(*current).deadlock_data.deadlocked.get()
                 {
@@ -1351,11 +1378,11 @@ mod deadlock_impl {
 
         for cycle in cycles {
             let (sender, receiver) = mpsc::channel();
-            for td in cycle {
-                let bucket = lock_bucket((*td).key.load(Ordering::Relaxed));
-                (*td).deadlock_data.deadlocked.set(true);
-                *(*td).deadlock_data.backtrace_sender.get() = Some(sender.clone());
-                let handle = (*td).parker.unpark_lock();
+            for td in &threads {
+                let bucket = lock_bucket((**td).key.load(Ordering::Relaxed));
+                (**td).deadlock_data.deadlocked.set(true);
+                *(**td).deadlock_data.backtrace_sender.get() = Some(sender.clone());
+                let handle = (**td).parker.unpark_lock();
                 // SAFETY: We hold the lock here, as required
                 bucket.mutex.unlock();
                 // unpark the deadlocked thread!
@@ -1364,7 +1391,10 @@ mod deadlock_impl {
             }
             // make sure to drop our sender before collecting results
             drop(sender);
-            results.push(receiver.iter().collect());
+            results.push(Deadlock {
+                deadlocked_thread_ids: cycle.iter().map(|td| (**td).deadlock_data.thread_id).collect(),
+                all_threads: receiver.iter().collect()
+            });
         }
 
         DEADLOCK_DETECTION_LOCK.unlock();
