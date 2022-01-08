@@ -1172,7 +1172,7 @@ mod deadlock_impl {
     pub struct ThreadInfo {
         thread_id: usize,
         resources: Vec<usize>,
-        backtrace: Backtrace,
+        //backtrace: Backtrace,
     }
 
     impl ThreadInfo {
@@ -1182,9 +1182,9 @@ mod deadlock_impl {
         }
 
         /// The thread backtrace
-        pub fn backtrace(&self) -> &Backtrace {
-            &self.backtrace
-        }
+        // pub fn backtrace(&self) -> &Backtrace {
+        //     &self.backtrace
+        // }
 
         /// The resources held by this thread
         pub fn resources(&self) -> &Vec<usize> {
@@ -1224,7 +1224,7 @@ mod deadlock_impl {
                 .send(ThreadInfo {
                     thread_id: td.deadlock_data.thread_id,
                     resources: (*td.deadlock_data.resources.get()).clone(),
-                    backtrace: Backtrace::new(),
+                    //backtrace: Backtrace::new(),
                 })
                 .unwrap();
             // make sure to close this sender
@@ -1377,23 +1377,16 @@ mod deadlock_impl {
         let mut results = Vec::with_capacity(cycles.len());
 
         for cycle in cycles {
-            let (sender, receiver) = mpsc::channel();
-            for td in &threads {
-                let bucket = lock_bucket((**td).key.load(Ordering::Relaxed));
-                (**td).deadlock_data.deadlocked.set(true);
-                *(**td).deadlock_data.backtrace_sender.get() = Some(sender.clone());
-                let handle = (**td).parker.unpark_lock();
-                // SAFETY: We hold the lock here, as required
-                bucket.mutex.unlock();
-                // unpark the deadlocked thread!
-                // on unpark it'll notice the deadlocked flag and report back
-                handle.unpark();
-            }
-            // make sure to drop our sender before collecting results
-            drop(sender);
+            let deadlocked_thread_ids = cycle.iter().map(|td| (**td).deadlock_data.thread_id).collect();
+
+            let all_threads = threads.iter().map(|td| ThreadInfo {
+                thread_id:  (**td).deadlock_data.thread_id,
+                resources: (*(**td).deadlock_data.resources.get()).clone(),
+            }).collect();
+
             results.push(Deadlock {
-                deadlocked_thread_ids: cycle.iter().map(|td| (**td).deadlock_data.thread_id).collect(),
-                all_threads: receiver.iter().collect()
+                deadlocked_thread_ids,
+                all_threads,
             });
         }
 
