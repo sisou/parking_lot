@@ -504,6 +504,8 @@ unsafe impl lock_api::RawRwLockUpgradeTimed for RawRwLock {
 }
 
 impl RawRwLock {
+    const SLOW_LOCK_THRESHOLD: Duration = Duration::from_millis(250);
+
     #[inline(always)]
     fn try_lock_shared_fast(&self, recursive: bool) -> bool {
         let state = self.state.load(Ordering::Relaxed);
@@ -629,6 +631,8 @@ impl RawRwLock {
             }
         };
 
+        let start = Instant::now();
+
         // Step 1: grab exclusive ownership of WRITER_BIT
         let timed_out = !self.lock_common(
             timeout,
@@ -640,8 +644,23 @@ impl RawRwLock {
             return false;
         }
 
+        let elapsed_exclusive = start.elapsed();
+        let start = Instant::now();
+
         // Step 2: wait for all remaining readers to exit the lock.
-        self.wait_for_readers(timeout, 0)
+        let result = self.wait_for_readers(timeout, 0);
+
+        let elapsed_readers = start.elapsed();
+        let elapsed_total = elapsed_exclusive + elapsed_readers;
+        if elapsed_total > Self::SLOW_LOCK_THRESHOLD {
+            log::warn!(
+                "lock_exclusive_slow() took {:?} (exclusive={:?}, readers={:?})",
+                elapsed_total, elapsed_exclusive, elapsed_readers
+            );
+            log::warn!("{:#?}", backtrace::Backtrace::new());
+        }
+
+        result
     }
 
     #[cold]
@@ -716,7 +735,18 @@ impl RawRwLock {
                 *state = self.state.load(Ordering::Relaxed);
             }
         };
-        self.lock_common(timeout, TOKEN_SHARED, try_lock, WRITER_BIT)
+
+        let start = Instant::now();
+
+        let result = self.lock_common(timeout, TOKEN_SHARED, try_lock, WRITER_BIT);
+
+        let elapsed = start.elapsed();
+        if elapsed > Self::SLOW_LOCK_THRESHOLD {
+            log::warn!("lock_shared_slow() took {:?}", elapsed);
+            log::warn!("{:#?}", backtrace::Backtrace::new());
+        }
+
+        result
     }
 
     #[cold]
