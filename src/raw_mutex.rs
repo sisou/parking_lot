@@ -178,6 +178,8 @@ unsafe impl lock_api::RawMutexTimed for RawMutex {
 }
 
 impl RawMutex {
+    const SLOW_LOCK_THRESHOLD: Duration = Duration::from_millis(250);
+
     // Used by Condvar when requeuing threads to us, must be called while
     // holding the queue lock.
     #[inline]
@@ -208,6 +210,20 @@ impl RawMutex {
 
     #[cold]
     fn lock_slow(&self, timeout: Option<Instant>) -> bool {
+        let start = Instant::now();
+
+        let ret = self.inner_lock_slow(timeout);
+
+        let elapsed = start.elapsed();
+        if elapsed > Self::SLOW_LOCK_THRESHOLD {
+            log::warn!("mutex_lock_slow() took {:?}", elapsed);
+            log::warn!("{:#?}", backtrace::Backtrace::new());
+        }
+
+        ret
+    }
+
+    fn inner_lock_slow(&self, timeout: Option<Instant>) -> bool {
         let mut spinwait = SpinWait::new();
         let mut state = self.state.load(Ordering::Relaxed);
         loop {
