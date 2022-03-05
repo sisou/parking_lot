@@ -657,7 +657,7 @@ impl RawRwLock {
                 "lock_exclusive_slow() took {:?} (exclusive={:?}, readers={:?})",
                 elapsed_total, elapsed_exclusive, elapsed_readers
             );
-            log::warn!("{:#?}", backtrace::Backtrace::new());
+            log::warn!("{:?}", backtrace::Backtrace::new());
         }
 
         result
@@ -743,7 +743,7 @@ impl RawRwLock {
         let elapsed = start.elapsed();
         if elapsed > Self::SLOW_LOCK_THRESHOLD {
             log::warn!("lock_shared_slow() took {:?}", elapsed);
-            log::warn!("{:#?}", backtrace::Backtrace::new());
+            log::warn!("{:?}", backtrace::Backtrace::new());
         }
 
         result

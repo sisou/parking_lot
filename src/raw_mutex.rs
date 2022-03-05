@@ -217,7 +217,7 @@ impl RawMutex {
         let elapsed = start.elapsed();
         if elapsed > Self::SLOW_LOCK_THRESHOLD {
             log::warn!("mutex_lock_slow() took {:?}", elapsed);
-            log::warn!("{:#?}", backtrace::Backtrace::new());
+            log::warn!("{:?}", backtrace::Backtrace::new());
         }
 
         ret

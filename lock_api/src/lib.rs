@@ -103,7 +103,7 @@ use std::time::{Duration, Instant};
 #[cold]
 fn report_lock_time<T>(duration: Duration) {
     log::warn!("lock held for a long time: {:?} - {}", duration, std::any::type_name::<T>());
-    log::warn!("{:#?}", backtrace::Backtrace::new());
+    log::warn!("{:?}", backtrace::Backtrace::new());
 }
 
 fn check_lock_time<T>(start: Instant) {
