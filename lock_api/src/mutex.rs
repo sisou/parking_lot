@@ -10,6 +10,7 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::mem;
 use core::ops::{Deref, DerefMut};
+use std::time::Instant;
 
 #[cfg(feature = "arc_lock")]
 use alloc::sync::Arc;
@@ -23,6 +24,8 @@ use owning_ref::StableAddress;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use crate::check_lock_time;
 
 /// Basic operations for a mutex.
 ///
@@ -197,6 +200,7 @@ impl<R: RawMutex, T: ?Sized> Mutex<R, T> {
         MutexGuard {
             mutex: self,
             marker: PhantomData,
+            start: Instant::now(),
         }
     }
 
@@ -303,6 +307,7 @@ impl<R: RawMutex, T: ?Sized> Mutex<R, T> {
         ArcMutexGuard {
             mutex: self.clone(),
             marker: PhantomData,
+            start: Instant::now(),
         }
     }
 
@@ -344,7 +349,7 @@ impl<R: RawMutexFair, T: ?Sized> Mutex<R, T> {
     /// # Safety
     ///
     /// This method must only be called if the current thread logically owns a
-    /// `MutexGuard` but that guard has be discarded using `mem::forget`.
+    /// `MutexGuard` but that guard has been discarded using `mem::forget`.
     /// Behavior is undefined if a mutex is unlocked when not locked.
     #[inline]
     pub unsafe fn force_unlock_fair(&self) {
@@ -489,6 +494,7 @@ where
 pub struct MutexGuard<'a, R: RawMutex, T: ?Sized> {
     mutex: &'a Mutex<R, T>,
     marker: PhantomData<(&'a mut T, R::GuardMarker)>,
+    start: Instant,
 }
 
 unsafe impl<'a, R: RawMutex + Sync + 'a, T: ?Sized + Sync + 'a> Sync for MutexGuard<'a, R, T> {}
@@ -514,11 +520,13 @@ impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> MutexGuard<'a, R, T> {
     {
         let raw = &s.mutex.raw;
         let data = f(unsafe { &mut *s.mutex.data.get() });
+        let start = s.start;
         mem::forget(s);
         MappedMutexGuard {
             raw,
             data,
             marker: PhantomData,
+            start,
         }
     }
 
@@ -541,11 +549,13 @@ impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> MutexGuard<'a, R, T> {
             Some(data) => data,
             None => return Err(s),
         };
+        let start = s.start;
         mem::forget(s);
         Ok(MappedMutexGuard {
             raw,
             data,
             marker: PhantomData,
+            start,
         })
     }
 
@@ -558,11 +568,15 @@ impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> MutexGuard<'a, R, T> {
     where
         F: FnOnce() -> U,
     {
+        check_lock_time(s.start);
         // Safety: A MutexGuard always holds the lock.
         unsafe {
             s.mutex.raw.unlock();
         }
-        defer!(s.mutex.raw.lock());
+        defer!({
+            s.mutex.raw.lock();
+            s.start = Instant::now();
+        });
         f()
     }
 }
@@ -582,6 +596,7 @@ impl<'a, R: RawMutexFair + 'a, T: ?Sized + 'a> MutexGuard<'a, R, T> {
     /// using this method instead of dropping the `MutexGuard` normally.
     #[inline]
     pub fn unlock_fair(s: Self) {
+        check_lock_time(s.start);
         // Safety: A MutexGuard always holds the lock.
         unsafe {
             s.mutex.raw.unlock_fair();
@@ -600,11 +615,15 @@ impl<'a, R: RawMutexFair + 'a, T: ?Sized + 'a> MutexGuard<'a, R, T> {
     where
         F: FnOnce() -> U,
     {
+        check_lock_time(s.start);
         // Safety: A MutexGuard always holds the lock.
         unsafe {
             s.mutex.raw.unlock_fair();
         }
-        defer!(s.mutex.raw.lock());
+        defer!({
+            s.mutex.raw.lock();
+            s.start = Instant::now();
+        });
         f()
     }
 
@@ -640,6 +659,7 @@ impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> DerefMut for MutexGuard<'a, R, T> {
 impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> Drop for MutexGuard<'a, R, T> {
     #[inline]
     fn drop(&mut self) {
+        check_lock_time(self.start);
         // Safety: A MutexGuard always holds the lock.
         unsafe {
             self.mutex.raw.unlock();
@@ -671,6 +691,7 @@ unsafe impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> StableAddress for MutexGuard<'
 pub struct ArcMutexGuard<R: RawMutex, T: ?Sized> {
     mutex: Arc<Mutex<R, T>>,
     marker: PhantomData<R::GuardMarker>,
+    start: Instant,
 }
 
 #[cfg(feature = "arc_lock")]
@@ -690,11 +711,15 @@ impl<R: RawMutex, T: ?Sized> ArcMutexGuard<R, T> {
     where
         F: FnOnce() -> U,
     {
+        check_lock_time(s.start);
         // Safety: A MutexGuard always holds the lock.
         unsafe {
             s.mutex.raw.unlock();
         }
-        defer!(s.mutex.raw.lock());
+        defer!({
+            s.mutex.raw.lock();
+            s.start = Instant::now();
+        });
         f()
     }
 }
@@ -706,6 +731,7 @@ impl<R: RawMutexFair, T: ?Sized> ArcMutexGuard<R, T> {
     /// This is functionally identical to the `unlock_fair` method on [`MutexGuard`].
     #[inline]
     pub fn unlock_fair(s: Self) {
+        check_lock_time(s.start);
         // Safety: A MutexGuard always holds the lock.
         unsafe {
             s.mutex.raw.unlock_fair();
@@ -724,11 +750,15 @@ impl<R: RawMutexFair, T: ?Sized> ArcMutexGuard<R, T> {
     where
         F: FnOnce() -> U,
     {
+        check_lock_time(s.start);
         // Safety: A MutexGuard always holds the lock.
         unsafe {
             s.mutex.raw.unlock_fair();
         }
-        defer!(s.mutex.raw.lock());
+        defer!({
+            s.mutex.raw.lock();
+            s.start = Instant::now();
+        });
         f()
     }
 
@@ -765,6 +795,7 @@ impl<R: RawMutex, T: ?Sized> DerefMut for ArcMutexGuard<R, T> {
 impl<R: RawMutex, T: ?Sized> Drop for ArcMutexGuard<R, T> {
     #[inline]
     fn drop(&mut self) {
+        check_lock_time(self.start);
         // Safety: A MutexGuard always holds the lock.
         unsafe {
             self.mutex.raw.unlock();
@@ -784,6 +815,7 @@ pub struct MappedMutexGuard<'a, R: RawMutex, T: ?Sized> {
     raw: &'a R,
     data: *mut T,
     marker: PhantomData<&'a mut T>,
+    start: Instant,
 }
 
 unsafe impl<'a, R: RawMutex + Sync + 'a, T: ?Sized + Sync + 'a> Sync
@@ -811,11 +843,13 @@ impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> MappedMutexGuard<'a, R, T> {
     {
         let raw = s.raw;
         let data = f(unsafe { &mut *s.data });
+        let start = s.start;
         mem::forget(s);
         MappedMutexGuard {
             raw,
             data,
             marker: PhantomData,
+            start,
         }
     }
 
@@ -838,11 +872,13 @@ impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> MappedMutexGuard<'a, R, T> {
             Some(data) => data,
             None => return Err(s),
         };
+        let start = s.start;
         mem::forget(s);
         Ok(MappedMutexGuard {
             raw,
             data,
             marker: PhantomData,
+            start,
         })
     }
 }
@@ -862,6 +898,7 @@ impl<'a, R: RawMutexFair + 'a, T: ?Sized + 'a> MappedMutexGuard<'a, R, T> {
     /// using this method instead of dropping the `MutexGuard` normally.
     #[inline]
     pub fn unlock_fair(s: Self) {
+        check_lock_time(s.start);
         // Safety: A MutexGuard always holds the lock.
         unsafe {
             s.raw.unlock_fair();
@@ -888,6 +925,7 @@ impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> DerefMut for MappedMutexGuard<'a, R, 
 impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> Drop for MappedMutexGuard<'a, R, T> {
     #[inline]
     fn drop(&mut self) {
+        check_lock_time(self.start);
         // Safety: A MappedMutexGuard always holds the lock.
         unsafe {
             self.raw.unlock();

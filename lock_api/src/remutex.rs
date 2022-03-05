@@ -32,6 +32,10 @@ use owning_ref::StableAddress;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::check_lock_time;
+
+use std::time::Instant;
+
 /// Helper trait which returns a non-zero thread ID.
 ///
 /// The simplest way to implement this trait is to return the address of a
@@ -295,6 +299,7 @@ impl<R: RawMutex, G: GetThreadId, T: ?Sized> ReentrantMutex<R, G, T> {
         ReentrantMutexGuard {
             remutex: &self,
             marker: PhantomData,
+            start: Instant::now(),
         }
     }
 
@@ -409,6 +414,7 @@ impl<R: RawMutex, G: GetThreadId, T: ?Sized> ReentrantMutex<R, G, T> {
         ArcReentrantMutexGuard {
             remutex: self.clone(),
             marker: PhantomData,
+            start: Instant::now(),
         }
     }
 
@@ -603,6 +609,7 @@ where
 pub struct ReentrantMutexGuard<'a, R: RawMutex, G: GetThreadId, T: ?Sized> {
     remutex: &'a ReentrantMutex<R, G, T>,
     marker: PhantomData<(&'a T, GuardNoSend)>,
+    start: Instant,
 }
 
 unsafe impl<'a, R: RawMutex + Sync + 'a, G: GetThreadId + Sync + 'a, T: ?Sized + Sync + 'a> Sync
@@ -631,11 +638,13 @@ impl<'a, R: RawMutex + 'a, G: GetThreadId + 'a, T: ?Sized + 'a> ReentrantMutexGu
     {
         let raw = &s.remutex.raw;
         let data = f(unsafe { &*s.remutex.data.get() });
+        let start = s.start;
         mem::forget(s);
         MappedReentrantMutexGuard {
             raw,
             data,
             marker: PhantomData,
+            start,
         }
     }
 
@@ -661,11 +670,13 @@ impl<'a, R: RawMutex + 'a, G: GetThreadId + 'a, T: ?Sized + 'a> ReentrantMutexGu
             Some(data) => data,
             None => return Err(s),
         };
+        let start = s.start;
         mem::forget(s);
         Ok(MappedReentrantMutexGuard {
             raw,
             data,
             marker: PhantomData,
+            start,
         })
     }
 
@@ -678,11 +689,15 @@ impl<'a, R: RawMutex + 'a, G: GetThreadId + 'a, T: ?Sized + 'a> ReentrantMutexGu
     where
         F: FnOnce() -> U,
     {
+        check_lock_time(s.start);
         // Safety: A ReentrantMutexGuard always holds the lock.
         unsafe {
             s.remutex.raw.unlock();
         }
-        defer!(s.remutex.raw.lock());
+        defer!({
+            s.remutex.raw.lock();
+            s.start = Instant::now();
+        });
         f()
     }
 }
@@ -704,6 +719,7 @@ impl<'a, R: RawMutexFair + 'a, G: GetThreadId + 'a, T: ?Sized + 'a>
     /// using this method instead of dropping the `ReentrantMutexGuard` normally.
     #[inline]
     pub fn unlock_fair(s: Self) {
+        check_lock_time(s.start);
         // Safety: A ReentrantMutexGuard always holds the lock
         unsafe {
             s.remutex.raw.unlock_fair();
@@ -722,11 +738,15 @@ impl<'a, R: RawMutexFair + 'a, G: GetThreadId + 'a, T: ?Sized + 'a>
     where
         F: FnOnce() -> U,
     {
+        check_lock_time(s.start);
         // Safety: A ReentrantMutexGuard always holds the lock
         unsafe {
             s.remutex.raw.unlock_fair();
         }
-        defer!(s.remutex.raw.lock());
+        defer!({
+            s.remutex.raw.lock();
+            s.start = Instant::now();
+        });
         f()
     }
 
@@ -737,10 +757,12 @@ impl<'a, R: RawMutexFair + 'a, G: GetThreadId + 'a, T: ?Sized + 'a>
     /// are no waiting threads.
     #[inline]
     pub fn bump(s: &mut Self) {
+        check_lock_time(s.start);
         // Safety: A ReentrantMutexGuard always holds the lock
         unsafe {
             s.remutex.raw.bump();
         }
+        s.start = Instant::now();
     }
 }
 
@@ -759,6 +781,7 @@ impl<'a, R: RawMutex + 'a, G: GetThreadId + 'a, T: ?Sized + 'a> Drop
 {
     #[inline]
     fn drop(&mut self) {
+        check_lock_time(self.start);
         // Safety: A ReentrantMutexGuard always holds the lock.
         unsafe {
             self.remutex.raw.unlock();
@@ -798,6 +821,7 @@ unsafe impl<'a, R: RawMutex + 'a, G: GetThreadId + 'a, T: ?Sized + 'a> StableAdd
 pub struct ArcReentrantMutexGuard<R: RawMutex, G: GetThreadId, T: ?Sized> {
     remutex: Arc<ReentrantMutex<R, G, T>>,
     marker: PhantomData<GuardNoSend>,
+    start: Instant,
 }
 
 #[cfg(feature = "arc_lock")]
@@ -816,11 +840,15 @@ impl<R: RawMutex, G: GetThreadId, T: ?Sized> ArcReentrantMutexGuard<R, G, T> {
     where
         F: FnOnce() -> U,
     {
+        check_lock_time(s.start);
         // Safety: A ReentrantMutexGuard always holds the lock.
         unsafe {
             s.remutex.raw.unlock();
         }
-        defer!(s.remutex.raw.lock());
+        defer!({
+            s.remutex.raw.lock();
+            s.start = Instant::now();
+        });
         f()
     }
 }
@@ -832,6 +860,7 @@ impl<R: RawMutexFair, G: GetThreadId, T: ?Sized> ArcReentrantMutexGuard<R, G, T>
     /// This is functionally identical to the `unlock_fair` method on [`ReentrantMutexGuard`].
     #[inline]
     pub fn unlock_fair(s: Self) {
+        check_lock_time(s.start);
         // Safety: A ReentrantMutexGuard always holds the lock
         unsafe {
             s.remutex.raw.unlock_fair();
@@ -850,11 +879,15 @@ impl<R: RawMutexFair, G: GetThreadId, T: ?Sized> ArcReentrantMutexGuard<R, G, T>
     where
         F: FnOnce() -> U,
     {
+        check_lock_time(s.start);
         // Safety: A ReentrantMutexGuard always holds the lock
         unsafe {
             s.remutex.raw.unlock_fair();
         }
-        defer!(s.remutex.raw.lock());
+        defer!({
+            s.remutex.raw.lock();
+            s.start = Instant::now();
+        });
         f()
     }
 
@@ -863,10 +896,12 @@ impl<R: RawMutexFair, G: GetThreadId, T: ?Sized> ArcReentrantMutexGuard<R, G, T>
     /// This is functionally equivalent to the `bump` method on [`ReentrantMutexGuard`].
     #[inline]
     pub fn bump(s: &mut Self) {
+        check_lock_time(s.start);
         // Safety: A ReentrantMutexGuard always holds the lock
         unsafe {
             s.remutex.raw.bump();
         }
+        s.start = Instant::now();
     }
 }
 
@@ -883,6 +918,7 @@ impl<R: RawMutex, G: GetThreadId, T: ?Sized> Deref for ArcReentrantMutexGuard<R,
 impl<R: RawMutex, G: GetThreadId, T: ?Sized> Drop for ArcReentrantMutexGuard<R, G, T> {
     #[inline]
     fn drop(&mut self) {
+        check_lock_time(self.start);
         // Safety: A ReentrantMutexGuard always holds the lock.
         unsafe {
             self.remutex.raw.unlock();
@@ -902,6 +938,7 @@ pub struct MappedReentrantMutexGuard<'a, R: RawMutex, G: GetThreadId, T: ?Sized>
     raw: &'a RawReentrantMutex<R, G>,
     data: *const T,
     marker: PhantomData<&'a T>,
+    start: Instant,
 }
 
 unsafe impl<'a, R: RawMutex + Sync + 'a, G: GetThreadId + Sync + 'a, T: ?Sized + Sync + 'a> Sync
@@ -927,11 +964,13 @@ impl<'a, R: RawMutex + 'a, G: GetThreadId + 'a, T: ?Sized + 'a>
     {
         let raw = s.raw;
         let data = f(unsafe { &*s.data });
+        let start = s.start;
         mem::forget(s);
         MappedReentrantMutexGuard {
             raw,
             data,
             marker: PhantomData,
+            start,
         }
     }
 
@@ -957,11 +996,13 @@ impl<'a, R: RawMutex + 'a, G: GetThreadId + 'a, T: ?Sized + 'a>
             Some(data) => data,
             None => return Err(s),
         };
+        let start = s.start;
         mem::forget(s);
         Ok(MappedReentrantMutexGuard {
             raw,
             data,
             marker: PhantomData,
+            start,
         })
     }
 }
@@ -983,6 +1024,7 @@ impl<'a, R: RawMutexFair + 'a, G: GetThreadId + 'a, T: ?Sized + 'a>
     /// using this method instead of dropping the `ReentrantMutexGuard` normally.
     #[inline]
     pub fn unlock_fair(s: Self) {
+        check_lock_time(s.start);
         // Safety: A MappedReentrantMutexGuard always holds the lock
         unsafe {
             s.raw.unlock_fair();
@@ -1006,6 +1048,7 @@ impl<'a, R: RawMutex + 'a, G: GetThreadId + 'a, T: ?Sized + 'a> Drop
 {
     #[inline]
     fn drop(&mut self) {
+        check_lock_time(self.start);
         // Safety: A MappedReentrantMutexGuard always holds the lock.
         unsafe {
             self.raw.unlock();
