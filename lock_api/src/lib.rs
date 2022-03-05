@@ -101,15 +101,15 @@ extern crate alloc;
 use std::time::{Duration, Instant};
 
 #[cold]
-fn report_lock_time(duration: Duration) {
-    log::warn!("lock held for a long time: {:?}", duration);
-    log::warn!("{:?}", backtrace::Backtrace::new());
+fn report_lock_time<T>(duration: Duration) {
+    log::warn!("lock held for a long time: {:?} - {}", duration, std::any::type_name::<T>());
+    log::warn!("{:#?}", backtrace::Backtrace::new());
 }
 
-fn check_lock_time(start: Instant) {
+fn check_lock_time<T>(start: Instant) {
     let elapsed = start.elapsed();
     if elapsed > Duration::from_millis(250) {
-        report_lock_time(elapsed);
+        report_lock_time::<T>(elapsed);
     }
 }
 

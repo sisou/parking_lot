@@ -568,7 +568,7 @@ impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> MutexGuard<'a, R, T> {
     where
         F: FnOnce() -> U,
     {
-        check_lock_time(s.start);
+        check_lock_time::<Self>(s.start);
         // Safety: A MutexGuard always holds the lock.
         unsafe {
             s.mutex.raw.unlock();
@@ -596,7 +596,7 @@ impl<'a, R: RawMutexFair + 'a, T: ?Sized + 'a> MutexGuard<'a, R, T> {
     /// using this method instead of dropping the `MutexGuard` normally.
     #[inline]
     pub fn unlock_fair(s: Self) {
-        check_lock_time(s.start);
+        check_lock_time::<Self>(s.start);
         // Safety: A MutexGuard always holds the lock.
         unsafe {
             s.mutex.raw.unlock_fair();
@@ -615,7 +615,7 @@ impl<'a, R: RawMutexFair + 'a, T: ?Sized + 'a> MutexGuard<'a, R, T> {
     where
         F: FnOnce() -> U,
     {
-        check_lock_time(s.start);
+        check_lock_time::<Self>(s.start);
         // Safety: A MutexGuard always holds the lock.
         unsafe {
             s.mutex.raw.unlock_fair();
@@ -659,7 +659,7 @@ impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> DerefMut for MutexGuard<'a, R, T> {
 impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> Drop for MutexGuard<'a, R, T> {
     #[inline]
     fn drop(&mut self) {
-        check_lock_time(self.start);
+        check_lock_time::<Self>(self.start);
         // Safety: A MutexGuard always holds the lock.
         unsafe {
             self.mutex.raw.unlock();
@@ -898,7 +898,7 @@ impl<'a, R: RawMutexFair + 'a, T: ?Sized + 'a> MappedMutexGuard<'a, R, T> {
     /// using this method instead of dropping the `MutexGuard` normally.
     #[inline]
     pub fn unlock_fair(s: Self) {
-        check_lock_time(s.start);
+        check_lock_time::<Self>(s.start);
         // Safety: A MutexGuard always holds the lock.
         unsafe {
             s.raw.unlock_fair();
@@ -925,7 +925,7 @@ impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> DerefMut for MappedMutexGuard<'a, R, 
 impl<'a, R: RawMutex + 'a, T: ?Sized + 'a> Drop for MappedMutexGuard<'a, R, T> {
     #[inline]
     fn drop(&mut self) {
-        check_lock_time(self.start);
+        check_lock_time::<Self>(self.start);
         // Safety: A MappedMutexGuard always holds the lock.
         unsafe {
             self.raw.unlock();

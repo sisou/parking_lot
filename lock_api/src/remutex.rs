@@ -689,7 +689,7 @@ impl<'a, R: RawMutex + 'a, G: GetThreadId + 'a, T: ?Sized + 'a> ReentrantMutexGu
     where
         F: FnOnce() -> U,
     {
-        check_lock_time(s.start);
+        check_lock_time::<Self>(s.start);
         // Safety: A ReentrantMutexGuard always holds the lock.
         unsafe {
             s.remutex.raw.unlock();
@@ -719,7 +719,7 @@ impl<'a, R: RawMutexFair + 'a, G: GetThreadId + 'a, T: ?Sized + 'a>
     /// using this method instead of dropping the `ReentrantMutexGuard` normally.
     #[inline]
     pub fn unlock_fair(s: Self) {
-        check_lock_time(s.start);
+        check_lock_time::<Self>(s.start);
         // Safety: A ReentrantMutexGuard always holds the lock
         unsafe {
             s.remutex.raw.unlock_fair();
@@ -738,7 +738,7 @@ impl<'a, R: RawMutexFair + 'a, G: GetThreadId + 'a, T: ?Sized + 'a>
     where
         F: FnOnce() -> U,
     {
-        check_lock_time(s.start);
+        check_lock_time::<Self>(s.start);
         // Safety: A ReentrantMutexGuard always holds the lock
         unsafe {
             s.remutex.raw.unlock_fair();
@@ -757,7 +757,7 @@ impl<'a, R: RawMutexFair + 'a, G: GetThreadId + 'a, T: ?Sized + 'a>
     /// are no waiting threads.
     #[inline]
     pub fn bump(s: &mut Self) {
-        check_lock_time(s.start);
+        check_lock_time::<Self>(s.start);
         // Safety: A ReentrantMutexGuard always holds the lock
         unsafe {
             s.remutex.raw.bump();
@@ -781,7 +781,7 @@ impl<'a, R: RawMutex + 'a, G: GetThreadId + 'a, T: ?Sized + 'a> Drop
 {
     #[inline]
     fn drop(&mut self) {
-        check_lock_time(self.start);
+        check_lock_time::<Self>(self.start);
         // Safety: A ReentrantMutexGuard always holds the lock.
         unsafe {
             self.remutex.raw.unlock();
@@ -1024,7 +1024,7 @@ impl<'a, R: RawMutexFair + 'a, G: GetThreadId + 'a, T: ?Sized + 'a>
     /// using this method instead of dropping the `ReentrantMutexGuard` normally.
     #[inline]
     pub fn unlock_fair(s: Self) {
-        check_lock_time(s.start);
+        check_lock_time::<Self>(s.start);
         // Safety: A MappedReentrantMutexGuard always holds the lock
         unsafe {
             s.raw.unlock_fair();
@@ -1048,7 +1048,7 @@ impl<'a, R: RawMutex + 'a, G: GetThreadId + 'a, T: ?Sized + 'a> Drop
 {
     #[inline]
     fn drop(&mut self) {
-        check_lock_time(self.start);
+        check_lock_time::<Self>(self.start);
         // Safety: A MappedReentrantMutexGuard always holds the lock.
         unsafe {
             self.raw.unlock();
