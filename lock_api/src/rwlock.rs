@@ -2029,6 +2029,14 @@ impl<'a, R: RawRwLockUpgrade + 'a, T: ?Sized + 'a> RwLockUpgradableReadGuard<'a,
     /// blocking the current thread until it can be acquired.
     pub fn upgrade(s: Self) -> RwLockWriteGuard<'a, R, T> {
         check_lock_time::<Self>(s.start);
+        Self::upgrade_untimed(s)
+    }
+
+    /// Atomically upgrades an upgradable read lock lock into a exclusive write lock,
+    /// blocking the current thread until it can be acquired.
+    ///
+    /// Don't check how long the upgradable read lock was held for reporting long lock hold times.
+    pub fn upgrade_untimed(s: Self) -> RwLockWriteGuard<'a, R, T> {
         // Safety: An RwLockUpgradableReadGuard always holds an upgradable lock.
         unsafe {
             RwLock::<R, T>::dec_readers(&s.rwlock.raw);
